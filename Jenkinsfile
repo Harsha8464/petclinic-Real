@@ -1,131 +1,72 @@
 pipeline{
     agent any
     tools{
-        jdk 'jdk17'
+        jdk 'jdk11'
         maven 'maven3'
     }
-    environment {
-        SCANNER_HOME=tool 'sonar-scanner'
-    }
-    stages {
+    stages{
         stage('clean workspace'){
             steps{
                 cleanWs()
             }
         }
-        stage('Checkout From Git'){
+        stage('checkout scm'){
             steps{
-                git branch: 'main', url: 'https://github.com/Aj7Ay/Petclinic-Real.git'
+                checkout scmGit(branches: [[name: '*/main']], extensions: [], userRemoteConfigs: [[url: 'https://github.com/Harsha8464/petclinic-Real.git']])
             }
         }
-        stage('mvn compile'){
+        stage('Maven Compile'){
             steps{
                 sh 'mvn clean compile'
             }
         }
-        stage('mvn test'){
-            steps{
-                sh 'mvn test'
-            }
-        }
-        stage("Sonarqube Analysis "){
-            steps{
-                withSonarQubeEnv('sonar-server') {
-                    sh ''' $SCANNER_HOME/bin/sonar-scanner -Dsonar.projectName=Petclinic \
-                    -Dsonar.java.binaries=. \
-                    -Dsonar.projectKey=Petclinic '''
-                }
-            }
-        }
-        stage("quality gate"){
-           steps {
-                 script {
-                     waitForQualityGate abortPipeline: false, credentialsId: 'Sonar-token' 
-                    }
-                } 
-        } 
-        stage('mvn build'){
-            steps{
-                sh 'mvn clean install'
-            }
-        }  
-        stage("OWASP Dependency Check"){
-            steps{
-                dependencyCheck additionalArguments: '--scan ./ --format HTML ', odcInstallation: 'DP-Check'
-                dependencyCheckPublisher pattern: '**/dependency-check-report.html'
-            }
-        }
-        stage("Docker Build & Push"){
+        stage('sonarqube Analysis'){
             steps{
                 script{
-                   withDockerRegistry(credentialsId: 'docker', toolName: 'docker'){   
-                       sh "docker build -t petclinic1 ."
-                       sh "docker tag petclinic1 sevenajay/petclinic1:latest "
-                       sh "docker push sevenajay/petclinic1:latest "
-                    }
-                }
-            }
-        }
-        stage("TRIVY"){
-            steps{
-                sh "trivy image sevenajay/petclinic1:latest > trivy.txt" 
-            }
-        }
-        stage ('Manual Approval'){
-          steps {
-           script {
-             timeout(time: 10, unit: 'MINUTES') {
-              def approvalMailContent = """
-              Project: ${env.JOB_NAME}
-              Build Number: ${env.BUILD_NUMBER}
-              Go to build URL and approve the deployment request.
-              URL de build: ${env.BUILD_URL}
-              """
-             mail(
-             to: 'postbox.aj99@gmail.com',
-             subject: "${currentBuild.result} CI: Project name -> ${env.JOB_NAME}", 
-             body: approvalMailContent,
-             mimeType: 'text/plain'
-             )
-            input(
-            id: "DeployGate",
-            message: "Deploy ${params.project_name}?",
-            submitter: "approver",
-            parameters: [choice(name: 'action', choices: ['Deploy'], description: 'Approve deployment')]
-            )  
-          }
-         }
-       }
-    }
-        stage('Deploy to conatiner'){
-            steps{
-                sh 'docker run -d --name pet1 -p 8082:8080 sevenajay/petclinic1:latest'
-            }
-        }
-        stage("Deploy To Tomcat"){
-            steps{
-                sh "sudo cp  /var/lib/jenkins/workspace/petclinic/target/petclinic.war /opt/apache-tomcat-9.0.65/webapps/ "
-            }
-        }
-        stage('Deploy to kubernets'){
-            steps{
-                script{
-                    withKubeConfig(caCertificate: '', clusterName: '', contextName: '', credentialsId: 'k8s', namespace: '', restrictKubeConfigAccess: false, serverUrl: '') {
-                       sh 'kubectl apply -f deployment.yaml'
-                  }
+                    withSonarQubeEnv(credentialsId: 'sonar-token') {
+                    sh 'mvn sonar:sonar'
                 }
             }
         }
     }
-    post {
-     always {
-        emailext attachLog: true,
-            subject: "'${currentBuild.result}'",
-            body: "Project: ${env.JOB_NAME}<br/>" +
-                "Build Number: ${env.BUILD_NUMBER}<br/>" +
-                "URL: ${env.BUILD_URL}<br/>",
-            to: 'postbox.aj99@gmail.com',
-            attachmentsPattern: 'trivy.txt'
+        stage('Quality Gate'){
+            steps{
+                script{
+                    waitForQualityGate abortPipeline: false, credentialsId: 'sonar-token'
+                }
+            }
+        }
+        stage('OWASP Dependency-Check Vulnerabilities'){
+            steps{
+                dependencyCheck additionalArguments: '--scan ./ --format HTML', odcInstallation: 'DP-Check'
+                dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
+            }
+        }     
+        stage('Build war file'){
+            steps{
+                sh 'mvn clean install package'
+            }
+        }
+        stage('Build and push to Dockerhub'){
+            steps{
+                script{
+                    withDockerRegistry(credentialsId: 'dokcer', toolName: 'docker') {
+                        sh 'docker build -t petclinic1 .'
+                        sh 'docker tag petclinic1 harshavardhan19/pet-clinic123:latest'
+                        sh 'docker push harshavardhan19/pet-clinic123:latest'
+                    }
+                }
+            }
+        }
+        stage('TRIVY'){
+            steps{
+                sh 'trivy image harshavardhan19/pet-clinic123:latest'
+            }
+        }
+        stage('Deploy to container'){
+            steps{
+                sh 'docker run -d --name pet1 -p 8082:8080 harshavardhan19/pet-clinic123:latest'
+            }
         }
     }
 }
